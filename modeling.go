@@ -1,4 +1,4 @@
-// Package modeling: Used for translating raw data into models
+// Package modeling Used for translating raw data into models
 package modeling
 
 import (
@@ -17,22 +17,28 @@ import (
 
 type DType = float64
 
-var ErrDivisionByZero = errors.New("division by zero")
+var (
+	ErrDivisionByZero  = errors.New("division by zero")
+	ErrIncorrectLength = errors.New("data slices aren't the same length")
+)
 
 type dataset struct {
 	values [][]DType
 	names  []string
 }
 type prediction struct {
-	pvalue []DType
-	result []DType
+	confidence DType
+	results    []DType
 }
 type Predictor interface {
-	test(dataset) prediction
+	test(dataset) (prediction, error)
 	confidence() DType
 }
 type KNNModel struct {
 	StandardizedData dataset
+	Mean             []DType
+	Std              []DType
+	OriginalData     dataset
 	Y                []DType
 	K                int
 }
@@ -40,43 +46,58 @@ type KNNModel struct {
 // TODO: look into how to implement this for any kind of number, not just float64
 
 // KNN This will run the KNN Model against data passed
-func knn(k int, x dataset, y []DType) (*KNNModel, error) {
-	// K and a test observation x0 , the KNN classifier first identifies the
-	// K points in the training data that are closest to x0 , represented by N0 .
-	// It then estimates the conditional probability for class j as the fraction of
-	// points in N0 whose response values equal j: Pr(Y = j|X = x0 ) = 1 0 I(yi = j).
-	// x [[4,5,6,4,5,1,1], [4,4,4,9,9,9,8]]
-	// y [16, 20, 28, 36, 45, 9, 8]
-
+func KNN(k int, x dataset, y []DType) (*KNNModel, error) {
 	// standardize inputs seems smart
-	for i, d := range x.values {
-		err := standardize(d)
+	var mean, std []DType
+	for _, d := range x.values {
+		m, s, err := standardize(d)
 		if err != nil {
-			log.Printf("Bad Data at index %d, or something else: %v", i, err)
+			log.Printf("Error Standardizing Data: %v", err)
 			return nil, err
 		}
+		mean = append(mean, m)
+		std = append(std, s)
 	}
 
-	return &KNNModel{StandardizedData: x, Y: y, K: k}, nil
+	return &KNNModel{StandardizedData: x, Mean: mean, Std: std, OriginalData: x, Y: y, K: k}, nil
 }
 
-func standardize(data []DType) error {
+func euclideanDistance(og []DType, newPoint []DType) (DType, error) {
+	if len(og) != len(newPoint) {
+		return 0.0, ErrIncorrectLength
+	}
+	sum := 0.0
+	for i, x := range og {
+		sum += (newPoint[i] - x) * (newPoint[i] - x)
+	}
+	d := math.Sqrt(sum)
+	return d, nil
+}
+
+func standardize(data []DType) (mean DType, std DType, err error) {
 	var sum, ssq DType
 	n := DType(len(data))
 	for _, v := range data {
 		sum += v
 	}
-	mean := sum / n
+	m := sum / n
 	for _, v := range data {
-		ssq += math.Pow(v-mean, 2)
+		ssq += math.Pow(v-m, 2)
 	}
-	std := math.Sqrt(ssq / n)
-	if std == 0 {
-		return ErrDivisionByZero
+	s := math.Sqrt(ssq / n)
+	if s == 0 {
+		return 0, 0, ErrDivisionByZero
 	}
 
 	for i, v := range data {
-		data[i] = (v - mean) / std
+		data[i] = (v - m) / std
 	}
-	return nil
+	return m, s, nil
+}
+
+func (m KNNModel) test(x dataset) (*prediction, error) {
+	for i, d := range x.values {
+		x.values[i] = (d - m.Mean) / m.Std
+	}
+	return nil, nil
 }
